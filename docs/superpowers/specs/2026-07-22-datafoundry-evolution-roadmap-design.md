@@ -17,6 +17,7 @@ DataFoundry 已具备较完整的数据 Agent 产品能力：Web、TUI、REST、
 ```text
 M0A 原生一键部署
 → M0B Docker Compose
+→ M0C 企业能力工程前置
 → M1 单组织企业交付基础
 → M2 SQLite / PostgreSQL 双持久化路径
 → M3 渐进式工程边界治理
@@ -69,6 +70,10 @@ M0A 原生一键部署
 - DataLink 的浏览器文件上传与建图未打通。
 - DataLink 不能自动复用用户在 Web 创建的模型 Profile。
 - K8s、多副本、对象存储和外部 Secret 尚未设计。
+- TUI 在 password 认证模式下尚无正式的生产登录方式。
+- 组织共享资源、用户私有资源、Session 和 Artifact 的可见性规则尚未定义。
+- 缺少覆盖 Metadata、Mastra 状态、文件、DataLink 图和加密主密钥的一致性备份集合。
+- 发布版本、SBOM、漏洞扫描、离线安装、资源配额和数据保留策略尚未形成企业交付标准。
 
 ## 3. 已确认决策总表
 
@@ -152,6 +157,8 @@ M0A 原生一键部署
 
 TUI 继续通过 REST 管理和读取资源，通过 AG-UI 发起与观察 Run。服务端持有 Session、Run、Checkpoint、消息、Artifact 和中断状态；TUI 只持有视图、滚动、输入历史、快捷键和终端布局等本地状态。
 
+password 认证当前以浏览器 Cookie 为主，不能直接作为 TUI 的正式认证方案。TUI 进入企业交付前必须明确采用 Personal Access Token、device-code 登录或其他不传递用户密码的终端认证方式；在此之前，TUI 的生产认证能力应明确标记为未完成，不能用 dev token 代替企业方案。
+
 TUI 能力优先级：
 
 1. 发起、观察、取消和恢复分析。
@@ -175,8 +182,9 @@ TUI 能力优先级：
 | --- | --- | --- | --- |
 | M0A | Ubuntu/Debian 原生一键部署 | 中 | 当前代码即可开始。 |
 | M0B | Docker Compose 快速部署 | 中 | M0A 的配置、health、端口和 storage 语义稳定。 |
-| M1 | 单组织三角色企业基础 | 大 | M0B 可重复交付；身份作用域设计确认。 |
-| M2 | SQLite / PostgreSQL 双路径与备份恢复 | 大 | Repository/transaction Port 设计确认。 |
+| M0C | 企业能力工程前置 | 小到中 | M0B 可重复交付；只建立 M1/M2 必需的边界和门禁。 |
+| M1 | 单组织三角色企业基础 | 大 | M0C 的身份、作用域、迁移和授权边界稳定。 |
+| M2 | SQLite / PostgreSQL 双路径与备份恢复 | 大 | M0C 的 Repository/transaction Port 设计确认。 |
 | M3 | 渐进式工程边界治理 | 持续 | 每次只迁移一个边界，并有行为保护。 |
 | M4 | K8s 与生产运维增强 | 大 | Compose、PostgreSQL、外部存储边界稳定。 |
 
@@ -208,6 +216,7 @@ TUI 能力优先级：
 - 未知端口占用进程不会被结束。
 - 日志、状态文件和 CI 输出不泄漏 Secret。
 - 所有命令语义和失败输出符合独立 M0A 规格。
+- 重复部署采用明确维护窗口，停止旧服务后才原地安装和构建；失败时数据完整且状态可诊断。
 
 完整行为见 [原生一键部署设计](./2026-07-22-native-one-click-deployment-design.md)。
 
@@ -244,6 +253,11 @@ api
 - 备份、恢复、升级和诊断命令。
 - AG-UI SSE 反向代理防缓冲验证。
 - CI 镜像构建与 Compose smoke。
+- HTTPS 反向代理、安全 Cookie、基础安全响应头和只暴露 Web 入口的部署基线。
+- 镜像版本标签、SBOM、依赖与镜像漏洞扫描。
+- 外部 URL 与连接配置的基础 SSRF / 出站限制说明，至少阻止明显的回环、链路本地和云 Metadata 滥用路径。
+- 在线部署与离线/隔离网络部署的支持边界；若首期不支持离线，必须明确声明并列出所需外部地址。
+- 基础结构化日志和 request/run correlation，便于 Compose 环境诊断。
 
 ### 9.4 退出门槛
 
@@ -252,17 +266,43 @@ api
 - 默认镜像以非 root 用户运行。
 - 原生部署与 Compose 使用相同核心配置含义。
 - Data Gateway 原生依赖在目标 Linux 架构上通过构建和连接 smoke。
+- 镜像和依赖扫描没有未处置的高危发布阻断项。
+- HTTPS 参考部署下登录、Cookie、REST 和 AG-UI SSE 均通过验收。
 
-## 10. M1：单组织企业交付基础
+## 10. M0C：企业能力工程前置
 
-### 10.1 已确认范围
+### 10.1 目的
+
+M0C 不是全面重构，而是在增加 RBAC 和 PostgreSQL 前建立最小安全落点，避免把新企业能力继续写入现有巨石后再迁移一次。
+
+### 10.2 交付物
+
+- 明确 Organization、Workspace、User 与 Resource 的领域术语和标识关系。
+- 为 identity、membership、resource scope 建立最小应用服务边界。
+- 为即将新增的组织与成员数据建立最小 Repository 和 Transaction Port；现有 SQLite 仍是唯一实现。
+- 建立 schema version、向前 migration、migration dry-run 和备份前置检查。
+- 建立 REST / AG-UI 身份上下文一致性测试。
+- 建立授权拒绝路径的通用测试工具，确保后续权限不只依赖 UI。
+- 为版本化 REST DTO、AG-UI event 和持久化事件建立兼容性规则与变更检查。
+- 建立跨层 import 和新增职责门禁，但不在本阶段拆完 API、Metadata 或 Web 大文件。
+
+### 10.3 退出门槛
+
+- M1 可以通过应用服务增加角色判断，而不需要在每个路由复制授权逻辑。
+- M1 新 schema 变化必须通过版本化 migration 执行并可在备份副本上演练。
+- M2 可以在不改变应用服务调用方式的情况下替换最小 repository 实现。
+- 现有 REST、AG-UI、Web 和 TUI 行为通过回归测试，没有大规模目录迁移。
+
+## 11. M1：单组织企业交付基础
+
+### 11.1 已确认范围
 
 - 一个部署实例对应一个组织。
 - 组织内支持多个用户。
 - 固定角色：管理员、分析师、查看者。
 - 不提供跨组织租户或自定义角色编辑器。
 
-### 10.2 推荐职责
+### 11.2 推荐职责
 
 初始角色边界建议在实施设计时细化：
 
@@ -277,7 +317,21 @@ api
 
 表中“受限或否”和“按策略”是 M1 开始前必须关闭的开放决策，不能直接进入实现。
 
-### 10.3 交付物
+### 11.3 资源作用域模型
+
+M1 在角色实现前必须确定每类对象的所有权、可见性和管理边界，不能只定义用户角色。至少覆盖：
+
+| 对象 | 必须决定的规则 |
+| --- | --- |
+| 模型、数据源、MCP、Skill、Knowledge | 组织共享、创建者私有或两者兼容；谁能修改和轮换 Secret。 |
+| Session、Run、Checkpoint | 默认私有还是组织可见；管理员是否可读取内容；协作者如何授权。 |
+| Artifact、文件、查询历史 | 继承 Session 权限还是独立分享；下载、导出和删除权限。 |
+| Audit、Token、PAT | 谁能查看、创建、吊销和导出；是否允许用户查看自己的记录。 |
+| 用户离职后的资源 | 转移、冻结、保留或删除策略。 |
+
+服务端查询必须同时应用 organization/workspace scope、对象所有权和角色权限。当前同时携带 `user_id` 与 `workspace_id` 的记录需要逐类迁移，不能统一删除其中一个字段后假设语义自然成立。
+
+### 11.4 交付物
 
 - Organization、Membership、Role 数据模型。
 - 从 personal workspace 到单组织 workspace 的兼容迁移。
@@ -287,22 +341,30 @@ api
 - 管理员 Web 页面。
 - 关键管理与数据访问审计事件。
 - 权限矩阵契约测试。
+- TUI 正式认证的首个可用方案；优先评估可吊销、有作用域和过期时间的 Personal Access Token，device-code 可作为后续体验增强。
+- 登录限流、密码尝试保护、Session/PAT 吊销与 Secret 轮换入口。
+- 文件、Session、Artifact 和 Audit 的基础保留与删除策略。
+- 面向组织的基础配额：并发 Run、文件空间、单文件大小和可配置的模型使用上限。
+- 文件上传执行大小、扩展名、MIME/内容一致性、压缩包展开上限和路径隔离检查，并预留恶意文件扫描 hook。
 
-### 10.4 退出门槛
+### 11.5 退出门槛
 
 - 三角色的允许和拒绝路径都有服务端测试。
 - 用户不能通过 REST、AG-UI、下载接口或 ID 猜测绕过角色边界。
 - 现有个人部署数据可迁移且有备份说明。
 - 管理员可以完成成员全生命周期管理。
 - 审计记录能回答谁在何时对什么资源执行了什么动作。
+- Web 与 TUI 均通过正式认证方案访问同一身份作用域，dev token 不进入正式验收。
+- 资源作用域、对象所有权、分享和离职转移都有服务端允许/拒绝测试。
+- 基础限流、配额和数据保留策略有明确默认值与管理员可见状态。
 
-## 11. M2：持久化、备份与 Secret
+## 12. M2：持久化、备份与 Secret
 
-### 11.1 目标
+### 12.1 目标
 
 保留 SQLite 的低门槛路径，同时提供 PostgreSQL 作为更高并发和未来 K8s 部署的 Metadata 后端。
 
-### 11.2 实施顺序
+### 12.2 实施顺序
 
 ```text
 梳理 repository 与事务语义
@@ -315,7 +377,7 @@ api
 
 不先写 PostgreSQL 版本再倒逼接口；以现有真实用例和事务边界提取最小 Port。
 
-### 11.3 交付物
+### 12.3 交付物
 
 - Repository、Transaction、Migration Ports。
 - 按领域拆分的 SQLite repository 文件。
@@ -325,19 +387,26 @@ api
 - PostgreSQL 备份恢复文档和 smoke。
 - Secret Port；本地加密实现继续作为默认路径。
 - 外部 Secret Provider 的接口边界，但 Vault/KMS 实现可进入 M4。
+- 一致性备份清单，覆盖 Metadata、Mastra/Agent 状态、文件资产、DataLink 图、配置和加密主密钥。
+- 恢复顺序、完整性校验、密钥缺失处理以及可演练的备份/恢复命令。
+- 明确的 RPO、RTO 和备份保留基线；轻量部署与企业部署可以采用不同等级，但必须显式声明。
+- 面向 DataLink 建图、大文件处理和 Artifact 导出的持久化 Job 状态与最小队列边界，避免多用户场景下用同步请求承载所有长任务。
+- 数据生命周期执行能力：过期 Session、Artifact、文件和审计记录的安全清理与保留豁免。
 
-### 11.4 退出门槛
+### 12.4 退出门槛
 
 - SQLite 与 PostgreSQL 运行相同的 repository contract suite。
 - 关键多表写入拥有明确事务边界。
 - 两种后端都能完成安装、升级、备份和恢复演练。
 - 应用服务不直接依赖 `DatabaseSync`、SQL 占位符风格或具体驱动类型。
+- 一次恢复演练能重建可登录、可读取历史、可访问文件且可解密 Secret 的完整实例，而不是只恢复单个数据库。
+- 长任务在服务重启后具有明确的恢复、失败或取消状态，不留下永久“运行中”记录。
 
-## 12. M3：渐进式工程边界治理
+## 13. M3：渐进式工程边界治理
 
 M3 不是一次性重构项目，而是若干可独立验收的迁移单元。
 
-### 12.1 API Server
+### 13.1 API Server
 
 目标结构：
 
@@ -352,19 +421,19 @@ apps/api
 
 先抽纯路由适配与 Run 应用服务，不改变公开路径、SSE 事件或认证行为。`server.ts` 最终只负责组合依赖和创建 HTTP Server。
 
-### 12.2 Config API
+### 13.2 Config API
 
 按资源族拆分 route adapter：identity、workspace、datasource、model、MCP、skill、knowledge、file、artifact、DataLink。公共 HTTP 解析、错误映射和 DTO 投影保留统一实现；业务规则进入应用服务。
 
-### 12.3 Metadata
+### 13.3 Metadata
 
-按 repository 和 schema migration 拆分 `packages/metadata/src/index.ts`。先保持 SQLite 行为完全一致，再引入 PostgreSQL。避免在同一变更中同时拆文件、改 schema 和改业务语义。
+按 repository 和 schema migration 继续拆分 `packages/metadata/src/index.ts`。M2 已完成 SQLite / PostgreSQL 双 adapter，M3 只治理剩余职责集中和依赖方向，不再次改变存储语义。避免在同一变更中同时拆文件、改 schema 和改业务语义。
 
-### 12.4 Web
+### 13.4 Web
 
 把 `data-tasks-app.tsx` 收敛为 workspace shell 和 feature composition，逐步抽出 session controller、run controller、resource configuration 和 feature panels。组件拆分必须围绕职责和测试边界，不以行数达标为目的。
 
-### 12.5 Web/TUI 一致性
+### 13.5 Web/TUI 一致性
 
 首期只共享：
 
@@ -375,15 +444,16 @@ apps/api
 
 Web 和 TUI 保留独立 reducer 与 UI 状态。新增协议事件必须同时增加两端契约测试；有意差异记录在能力矩阵中。
 
-### 12.6 架构门禁
+### 13.6 架构门禁
 
 - 跨层 import 规则。
 - 公共 DTO / event schema 变更检测。
 - REST 恢复快照与实时 AG-UI 终态等价测试。
 - 大文件新增职责审查，而不是机械禁止文件增长。
 - 每次迁移保留 feature flag、adapter 或可回退入口，稳定后删除旧路径。
+- REST、AG-UI、持久化事件和 TUI 客户端采用明确的版本与弃用窗口；breaking change 必须有迁移说明和兼容测试，不能只依靠同时升级 monorepo。
 
-## 13. M4：K8s 与生产运维增强
+## 14. M4：K8s 与生产运维增强
 
 进入条件是 Compose、PostgreSQL、持久化 Port 和 Secret Port 已稳定。
 
@@ -396,12 +466,14 @@ Web 和 TUI 保留独立 reducer 与 UI 状态。新增协议事件必须同时�
 - 异步 job worker 与长任务隔离。
 - 多副本下的 Run ownership、取消、恢复和事件一致性。
 - 正式备份恢复演练和升级回滚手册。
+- 网络策略、精细出站控制、Secret 自动轮换和审计日志外部归档。
+- 按组织或工作负载的高级配额、成本预算、容量规划和 SLO 告警。
 
 M4 不默认扩展到跨组织 SaaS 多租户。若未来需要多租户，应作为新的产品和安全设计周期处理。
 
-## 14. 跨阶段工程工作方式
+## 15. 跨阶段工程工作方式
 
-### 14.1 适合 AI 辅助开发的约束
+### 15.1 适合 AI 辅助开发的约束
 
 1. 一个变更只处理一个用例或一个边界。
 2. 修改前先补行为测试或事件 fixture。
@@ -411,7 +483,7 @@ M4 不默认扩展到跨组织 SaaS 多租户。若未来需要多租户，应�
 6. AI 不自动选择破坏性数据迁移、Secret 操作或端口进程终止策略。
 7. 每个里程碑保留一份决策日志和退出门槛，不用聊天记忆代替工程事实。
 
-### 14.2 验证层次
+### 15.2 验证层次
 
 ```text
 纯函数与 schema 单元测试
@@ -422,7 +494,7 @@ M4 不默认扩展到跨组织 SaaS 多租户。若未来需要多租户，应�
 → 真实环境验收
 ```
 
-## 15. 开放决策登记
+## 16. 开放决策登记
 
 这些问题尚未确认，必须在对应里程碑开始前决策：
 
@@ -431,23 +503,35 @@ M4 不默认扩展到跨组织 SaaS 多租户。若未来需要多租户，应�
 | M0A | test 邮件验证链接是否需要部署脚本提供更直接的查看入口。 | 实施计划拆解时。 |
 | M0A | 支持的 Ubuntu / Debian 最低版本和 CPU 架构。 | CI 镜像选择前。 |
 | M0A | 日志轮转阈值、保留文件数和健康检查总超时。 | 实施计划拆解时。 |
+| M0A | Node/Python/uv 安装源、版本锁定和下载校验策略。 | 依赖安装任务实现前。 |
 | M0B | 镜像发布到哪个 Registry，是否发布 arm64。 | 镜像 CI 设计前。 |
 | M0B | Data Gateway 大型原生驱动是进入主镜像还是拆成可选镜像。 | Dockerfile 设计前。 |
 | M0B | Compose secrets 与 `.env` 的默认优先级。 | Compose 配置设计前。 |
+| M0B | 首期是否支持离线安装包；若不支持，明确允许访问的依赖和镜像地址。 | 镜像发布设计前。 |
+| M0B | 官方 HTTPS 参考拓扑采用内置反向代理还是复用客户现有网关。 | Compose 设计前。 |
+| M0C | Organization 与现有 personal workspace 的稳定 ID 和迁移映射。 | Identity Port 定稿前。 |
+| M0C | REST、AG-UI 和持久化事件的兼容窗口与弃用策略。 | 兼容性门禁实现前。 |
 | M1 | 分析师是否可以创建和修改数据源、模型、MCP 和 Skill。 | 权限矩阵设计时。 |
 | M1 | 查看者是否可以发起只读 Run 或下载 Artifact。 | 权限矩阵设计时。 |
 | M1 | 初始管理员如何引导创建，现有用户如何迁移。 | 数据迁移设计前。 |
 | M1 | 邀请采用邮件链接、管理员临时链接还是两者兼容。 | 身份流程设计时。 |
+| M1 | 各资源是组织共享、创建者私有还是允许显式分享；管理员是否可读取用户会话内容。 | 资源作用域设计时。 |
+| M1 | TUI 首期采用 PAT 还是 device-code；Token 的作用域、过期和吊销规则。 | TUI 企业认证实现前。 |
+| M1 | Session、Artifact、文件和 Audit 的默认保留期与删除豁免。 | 数据生命周期实现前。 |
+| M1 | 并发 Run、文件空间和模型成本的默认配额。 | 配额实现前。 |
 | M2 | PostgreSQL driver、query builder 和 migration 工具选择。 | Storage Port 确认后。 |
 | M2 | SQLite 与 PostgreSQL 是否承诺双向数据迁移。 | 备份恢复设计前。 |
 | M2 | Secret Provider 首期只定义接口还是同时实现 Vault。 | 企业客户约束明确后。 |
+| M2 | 完整备份集的 RPO、RTO、保留周期和恢复演练频率。 | 备份设计前。 |
+| M2 | 长任务使用内置持久化队列还是外部队列。 | Job 状态模型确认后。 |
 | M3 | 哪个大文件作为第一个渐进拆分样板。 | M3 启动时，以当时变更频率选择。 |
 | M3 | conformance fixture 的版本和兼容窗口。 | 事件语料建立时。 |
 | M4 | K8s 单副本还是多副本作为首个验收目标。 | Helm 设计前。 |
 | 跨阶段 | DataLink 如何安全复用 Web 模型 Profile。 | DataLink 需要默认启用前。 |
 | 跨阶段 | 文件上传后如何通过 `fileAssetId` / `datasourceId` 触发 DataLink 建图。 | DataLink 文件导入设计时。 |
+| 跨阶段 | 可配置外部 URL 的 SSRF、DNS rebinding 和出站网络策略。 | M0B 基线设计并在 M4 强化。 |
 
-## 16. 风险与控制
+## 17. 风险与控制
 
 | 风险 | 影响 | 控制 |
 | --- | --- | --- |
@@ -459,8 +543,13 @@ M4 不默认扩展到跨组织 SaaS 多租户。若未来需要多租户，应�
 | AI 快速修改大文件 | 局部需求造成跨功能回归。 | 小批次、行为测试、diff scope 和架构门禁。 |
 | DataLink 默认启用增加依赖和模型成本 | 快速部署失败面扩大。 | 原生和 Compose 均默认可选关闭。 |
 | Secret 出现在日志或诊断 | 安全事故。 | 统一脱敏、测试 Secret scan、权限受限日志。 |
+| RBAC 没有对象作用域模型 | 管理员、创建者和查看者看到错误资源。 | 先定义资源所有权、分享、继承和离职转移，再实现角色。 |
+| 在运行目录执行原地依赖更新 | 旧服务加载到一半新一半旧的依赖。 | M0A 更新采用明确维护窗口，停止后再 `npm ci/build`。 |
+| 可配置外部地址导致 SSRF / 出站滥用 | 访问内网或云 Metadata。 | M0B 建立基础拒绝策略，M4 使用网络策略和精细 allowlist。 |
+| 只备份 Metadata DB | 文件、Agent 状态、图或密钥无法恢复。 | 定义完整备份集、恢复顺序、RPO/RTO 并定期演练。 |
+| 未建立发布供应链门禁 | 镜像或依赖携带已知漏洞。 | 版本锁定、SBOM、漏洞扫描和发布阻断策略。 |
 
-## 17. 全局完成标准
+## 18. 全局完成标准
 
 本路线完成后应达到：
 
@@ -471,7 +560,11 @@ M4 不默认扩展到跨组织 SaaS 多租户。若未来需要多租户，应�
 - Web/TUI 保持各自体验，同时共享平台契约与行为门禁。
 - Metadata、API 和 Web 的高复杂度文件逐步按职责收敛，没有大爆炸迁移。
 - 备份、恢复、Secret、日志、健康、审计和升级形成可演练的企业交付闭环。
+- 组织共享资源与用户私有资源拥有明确、可测试的作用域和生命周期。
+- Web 与 TUI 均使用正式、可吊销的认证方式，不依赖 dev token。
+- 镜像和原生安装依赖具备版本锁定、来源说明、SBOM/漏洞检查或等价供应链证据。
+- 完整实例的 RPO/RTO、容量限制和基础 SLO 可配置、可观察并经过演练。
 
-## 18. 当前下一步
+## 19. 当前下一步
 
 当前只进入 M0A。总路线审阅通过后，使用 `superpowers:writing-plans` 为 [原生一键部署设计](./2026-07-22-native-one-click-deployment-design.md) 生成逐文件、逐测试的实施计划。M0B 及以后里程碑在各自开始前重新进行小范围设计确认，不把本路线文档当成不可修改的长期承诺。

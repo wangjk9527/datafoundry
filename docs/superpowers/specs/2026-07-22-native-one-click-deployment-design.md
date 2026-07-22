@@ -52,6 +52,7 @@ DataFoundry 当前通过 `npm run build`、`npm run build:web` 和 `npm run star
 5. **不抢占资源**：未知进程占用端口时只报告和重新选择。
 6. **数据优先**：脚本不删除 `storage`，配置写入使用临时文件和原子替换。
 7. **可诊断**：每次失败都说明阶段、日志位置、服务现状和下一步命令。
+8. **更新安全优先于可用性**：原地部署更新接受维护窗口，不在运行中的依赖目录执行 `npm ci`。
 
 ## 5. 用户命令面
 
@@ -111,10 +112,16 @@ Bash 负责 Linux、sudo 和进程生命周期；已有的 Node.js 22 负责可�
 
 ## 7. 首次交互流程
 
-完整阶段为：
+首次部署阶段为：
 
 ```text
-config → dependencies → ports → install → build → stop-old → start → verify
+config → dependencies → ports → install → build → start → verify
+```
+
+已有部署的更新阶段为：
+
+```text
+config → dependencies → ports → stop-old → install → build → start → verify
 ```
 
 用户看到明确进度，例如：
@@ -137,11 +144,13 @@ config → dependencies → ports → install → build → stop-old → start �
 8. 确认浏览器公开访问地址，并确保其端口与 Web 端口一致。
 9. 原子写入 `.env`，生成 `apps/web/.env.local`，限制配置文件权限。
 10. 创建 storage、日志和运行状态目录。
-11. 执行 `npm ci`、TypeScript build 和 Web build。
-12. 启用 DataLink 时执行其锁定依赖安装。
-13. 构建成功后停止旧 DataFoundry 进程组。
+11. 若当前版本正在运行，进入明确提示的维护窗口并正常停止旧 DataFoundry 进程组。
+12. 执行 `npm ci`、TypeScript build 和 Web build。
+13. 启用 DataLink 时执行其锁定依赖安装。
 14. 启动后台进程，等待健康检查。
 15. 输出 Web 地址、后续模型配置步骤和管理命令。
+
+更新时不得在旧服务运行期间原地修改 `node_modules` 或构建目录。首期选择简单、可预测的维护窗口，不承诺零停机或自动代码回滚。安装或构建失败时 storage 保持不变，服务保持停止状态；修复原因后重新执行 `./deploy.sh deploy`。
 
 ## 8. 默认配置
 
@@ -315,9 +324,10 @@ DataLink    disabled / healthy / unhealthy
 
 ```text
 ✗ Web 构建失败
-旧版本仍在运行，没有修改现有数据。
+更新处于维护窗口，服务当前已停止；现有数据未被修改。
 
 完整日志：storage/logs/deploy-20260722-143000.log
+修复后重试：./deploy.sh deploy
 诊断命令：./deploy.sh doctor
 ```
 
@@ -328,8 +338,8 @@ DataLink    disabled / healthy / unhealthy
 - 日志脱敏 API Key、密码、Token、Cookie 和 Secret。
 - 不删除 `storage`，不自动执行 `git pull`。
 - 不结束无法证明属于当前 DataFoundry 的进程。
-- 安装或构建成功后才停止旧服务。
-- 新版本启动失败时报告新进程、旧进程和健康状态；本阶段不承诺自动代码回滚。
+- 完成配置、依赖可安装性和端口预检后才停止旧服务；停止后才执行会修改运行目录的安装和构建。
+- 安装、构建或新版本启动失败时报告维护窗口和健康状态；本阶段不承诺自动代码回滚。
 - `Ctrl+C` 清理本次临时文件，但不误停部署前已经运行的版本。
 
 ## 16. 日志
@@ -355,7 +365,7 @@ DataLink    disabled / healthy / unhealthy
 8. 不结束占用端口的未知进程。
 9. DataLink 关闭时不检查 Python 和 uv。
 10. DataLink 开启时正确检查和安装依赖。
-11. 构建失败时不主动停止旧服务。
+11. 更新构建失败时保持 storage 完整，并明确报告服务处于维护窗口。
 12. `start`、`stop`、`restart`、`status`、`logs` 和 `doctor` 符合各自边界。
 13. 测试 Secret 不出现在日志和状态文件。
 14. 非默认端口下 Web BFF、REST 和 AG-UI SSE 正常。
