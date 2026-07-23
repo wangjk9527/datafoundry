@@ -13,8 +13,10 @@
 ## Execution baseline
 
 - 必须先合并并通过 M0A.5a、M0A.5b。
-- Task 1–5 不依赖 M0A；开始原生部署改造前必须完成本计划的 M0A 集成检查点。
+- Task 1–5（及 Task 9 的代码门禁）不依赖 M0A / PR #82；开始原生部署改造前必须完成本计划的 M0A 集成检查点。
+- **与 #82 解耦合并策略：** 若 PR #82 长期未合，可先合并 Task 1–5 + Task 8（手册/脚本清理）+ Task 9（password-only 扫描门禁）作为独立 PR；Task 6–7（合入 M0A 并改部署默认）另开后续 PR，避免整条 5c 被部署 PR 堵住。
 - 这是一次明确的不兼容重置：旧 Metadata、Mastra、workspace/storage 数据直接人工删除。
+- **旧存储误用预期：** 带着未重置的旧 schema / 仍含 `dev_token` 列的 Metadata DB 启动时，**不承诺兼容**。实现上优先拒绝启动并给出指向人工重置手册的明确错误；不得静默忽略多余列并继续以半旧半新状态运行。现场「删库不彻底」时按手册重做全量重置，不做自动迁移。
 - 严禁新增 schema migration、启动时自动删除、dev-user 定向清理器或旧数据兼容测试。
 
 ### Task 1: 为低层测试建立正式 metadata fixture
@@ -66,6 +68,7 @@ export function createVerifiedTestIdentity(metadata, options = {}) {
 这是不经过 HTTP 的低层测试数据工厂，不创建密码凭据，因此不能用于登录、路由或端到端测试；
 这些测试必须继续使用 M0A.5a 的真实注册客户端。文件名保持
 `metadata-test-identity.mjs`，导出名明确为 `createVerifiedTestIdentity`。
+fixture 单测必须断言：创建后不存在 password credential（防止被误用为可登录用户）。
 
 - [ ] **Step 3: 迁移直接 metadata/runtime 测试**
 
@@ -244,7 +247,7 @@ Expected: smoke PASS；扫描仅允许设计历史文档命中。
 **Files:**
 
 - Modify: `packages/metadata/src/index.ts`
-- Modify: metadata tests and callers
+- Modify: **`packages/**` 下所有依赖 `dev-user` / `dev_token` / `DEFAULT_DEV_USER` / `upsertDevUser` / `getByDevToken` 的测试与调用方**（至少扫描 `packages/**/*.test.ts`、`packages/**/*test*.ts`）；不得只改 `packages/metadata`
 - Modify: `scripts/smoke-metadata.mjs`
 
 - [ ] **Step 1: 写新 schema 失败测试**
@@ -255,6 +258,8 @@ Expected: smoke PASS；扫描仅允许设计历史文档命中。
 - 初始化后没有 `dev-user`；
 - password 用户、workspace、membership、Session 正常；
 - 不运行任何旧 schema 升级。
+
+另加 package 级回归：对 `packages/**` 跑（或至少 typecheck + 受影响 workspace 测试）确认无测试仍假设默认种子 `dev-user`。
 
 - [ ] **Step 2: 删除产品代码**
 
@@ -267,7 +272,7 @@ Expected: smoke PASS；扫描仅允许设计历史文档命中。
 - 初始化自动 upsert；
 - schema 中 `dev_token TEXT UNIQUE`。
 
-保留正式 password 用户方法。
+保留正式 password 用户方法。同步把 `packages/**` 测试改为使用 `createVerifiedTestIdentity` 或等价正式 fixture。
 
 - [ ] **Step 3: 验证**
 
@@ -275,12 +280,15 @@ Expected: smoke PASS；扫描仅允许设计历史文档命中。
 npm run typecheck
 npm run smoke:metadata
 node --test scripts/lib/metadata-test-identity.test.mjs
+rg -n "dev-user|dev_token|DEFAULT_DEV_USER|upsertDevUser|getByDevToken" packages --glob '*.ts'
 ```
+
+Expected: typecheck/smoke/fixture PASS；`packages` 扫描无产品/测试运行时依赖（测试辅助注释除外需人工复核）。
 
 - [ ] **Step 4: 提交**
 
 ```bash
-git add packages/metadata scripts/smoke-metadata.mjs scripts/lib
+git add packages scripts/smoke-metadata.mjs scripts/lib
 git commit -m "refactor(metadata): remove development identities from fresh schema"
 ```
 
@@ -343,6 +351,7 @@ git commit -m "refactor(web): remove development identity mode"
 ### Task 6: 集成 M0A 原生部署基线
 
 **Prerequisite:** PR #82 已合并到目标主分支，或其提交可以被明确 cherry-pick。
+若 #82 未就绪：跳过 Task 6–7，先交付 Task 1–5 + 8 + 9 的独立 PR（见 Execution baseline 解耦策略）；待 #82 合入后再开「部署收口」PR 执行本 Task 与 Task 7。
 
 **Files:**
 
@@ -368,7 +377,7 @@ git merge --no-commit --no-ff origin/pr/82
 ```
 
 Expected: 执行计划时已经通过 worktree skill 位于独立的 M0A.5c 分支；PR #82
-部署文件进入当前分支。如有冲突，只解决上述明确文件。
+部署文件进入当前分支。如有冲突，只解决上述明确文件。若改用已合入主分支的 M0A，则 `git merge`/`rebase` 目标主分支即可，不必强绑 `origin/pr/82`。
 
 - [ ] **Step 2: 解决配置语义冲突**
 
@@ -594,9 +603,9 @@ git commit -m "test(auth): enforce password-only cutover"
 
 ## M0A.5c exit gate
 
-- API、Web、TUI、部署脚本和正式测试不存在可运行 dev 身份入口。
-- 新 Metadata schema 不含 `dev_token`，启动不创建默认开发用户。
-- M0A 默认仅监听 loopback HTTP，注册 open、邮件 test；外部 HTTP 被拒绝。
+- API、Web、TUI、部署脚本、`packages/**` 测试和正式脚本不存在可运行 dev 身份入口。
+- 新 Metadata schema 不含 `dev_token`，启动不创建默认开发用户；旧 DB 误启动有明确失败/警告行为。
+- 若本 PR 含部署收口：M0A 默认仅监听 loopback HTTP，注册 open、邮件 test；外部 HTTP 被拒绝。若 #82 未合，部署项可延后到独立 PR，但身份删除与扫描门禁仍须通过。
 - 旧数据处理只有人工全量重置手册，没有迁移或自动清理代码。
-- 正式注册、验证、Session、CSRF、REST、AG-UI、Web/TUI 共享和原生部署 smoke 全部通过。
+- 正式注册、验证、Session、CSRF、REST、AG-UI、Web/TUI 共享（及已合入时的原生部署）smoke 全部通过。
 - 达到上述门槛后，才开始 M0B Docker 镜像与 Compose 实施。

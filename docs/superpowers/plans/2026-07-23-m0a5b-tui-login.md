@@ -13,9 +13,14 @@
 ## Execution baseline
 
 - 必须先合并并通过 M0A.5a。
+- **身份探测复用现有 `GET /api/v1/me`**，不新增 `/api/v1/auth/me`；`TuiAuthClient.me()` 必须打该路径。
 - 不修改 Web UI 架构，不共享 reducer，不引入设备码或 PAT。
 - 不保存密码；日志和异常不得包含 Cookie、CSRF、密码或 `Set-Cookie`。
 - 所有客户端通过注入 `fetch` 使用统一传输，不在各模块重复认证逻辑。
+- **TUI 全部网络出口清单（强制）：** `apps/tui/src/config/config-client.ts`、`apps/tui/src/protocol/copilotkit-client.ts`、`apps/tui/src/index.tsx` 中的 preflight（含 `GET /api/v1/run-defaults`）以及任何其它直接 `fetch` 调用点，正式启动路径必须走 `AuthenticatedTransport.fetch`；禁止残留裸 `fetch` 打受保护 API。
+- **DX 说明：** 本阶段删除 `--demo` / `DemoCopilotKitClient` 是刻意选择（正式链路优先）。5c 才砍 API `dev`，但中间期 TUI 不再提供离线 Demo 逃生舱；贡献者需用 password + test mail 看完整链路，不得在实现中途要求“先留 demo”。
+- Session key：`localhost`、`127.0.0.1`、`::1` 视为不同端点，不合并；帮助文案提示与 `--runtime-url` 保持一致。
+- 本地缓存 `expiresAt` 允许约 60 秒容差；仅超出容差仍过期时才跳过 `/me` 并清理。
 
 ### Task 1: 实现 Cookie Jar 和认证类型
 
@@ -101,6 +106,7 @@ git commit -m "feat(tui): add auth cookie jar"
 使用临时目录和注入平台环境，覆盖：
 
 - base URL 规范化保留部署 path，移除尾部 `/`；
+- `http://localhost:8787` 与 `http://127.0.0.1:8787` 归一化后仍是不同 key（不合并）；
 - 同一 base URL 新账号替换旧账号；
 - 不同 base URL 相互隔离；
 - JSON 损坏被隔离并视为无 Session；
@@ -221,10 +227,11 @@ git commit -m "feat(tui): add shared authenticated transport"
 覆盖：
 
 - status、login、me、csrf、logout 的 URL 和方法；
+- `me()` 请求 `GET /api/v1/me`，不得请求 `/api/v1/auth/me`；
 - login body 固定带 `client: "tui"`；
 - `expiresAt` 必须读取登录响应的 `session.expiresAt`，不得本地加七天推算；
-- 默认启动先读缓存再 `/me`；
-- 缓存的 `expiresAt` 已过期时直接清理，不发 `/me`；
+- 默认启动先读缓存再 `GET /api/v1/me`；
+- 缓存的 `expiresAt` 仅在超出约 60 秒容差后仍过期时直接清理并跳过 `/me`；容差内仍发一次 `/me` 以服务端为准；
 - 缓存失效清除并进入登录；
 - `--no-auto-login` 不使用缓存；
 - 新登录失败不改旧缓存；
@@ -327,14 +334,16 @@ git add apps/tui/src/auth apps/tui/package.json
 git commit -m "feat(tui): add interactive login and web registration"
 ```
 
-### Task 6: 将 REST 与 AG-UI 客户端接入统一传输
+### Task 6: 将 REST、AG-UI 与启动 preflight 接入统一传输
 
 **Files:**
 
 - Modify: `apps/tui/src/config/config-client.ts`
 - Modify: `apps/tui/src/protocol/copilotkit-client.ts`
+- Modify: `apps/tui/src/index.tsx`（preflight / `run-defaults`）
 - Create: `apps/tui/src/config/config-client.test.ts`
 - Create: `apps/tui/src/protocol/copilotkit-client-auth.test.ts`
+- Create: `apps/tui/src/index-preflight-auth.test.ts`（或等价可测模块）
 - Modify: `apps/tui/package.json`
 
 - [ ] **Step 1: 写失败测试**
@@ -343,8 +352,12 @@ git commit -m "feat(tui): add interactive login and web registration"
 
 - ConfigClient 的 REST GET/POST 只调用注入 fetch；
 - CopilotKitClient 的 AG-UI POST/SSE 只调用注入 fetch；
-- 两者收到的是同一个 transport.fetch；
-- 客户端内部没有重新构造认证 header。
+- `index.tsx` / 抽出的 preflight 对 `GET /api/v1/run-defaults` 只调用注入的认证 fetch；
+- 上述三者在正式启动路径收到的是同一个 `transport.fetch`；
+- 客户端内部没有重新构造认证 header；
+- password 模式下未带 Cookie 的 `run-defaults` 不得被静默当成「无默认数据源」（应用认证传输后应成功或显式失败）。
+
+增加源码扫描或静态断言门禁：`apps/tui/src` 正式路径中，除测试与 `AuthenticatedTransport` 自身外，不得对 API 使用裸 `globalThis.fetch` / 未注入的 `fetch(`。
 
 - [ ] **Step 2: 修改构造参数**
 
@@ -355,16 +368,17 @@ type ClientOptions = {
 };
 ```
 
-所有直接 `fetch(...)` 改为 `this.fetchImpl(...)`，默认值仍为 global fetch，方便纯单元测试，但正式入口必须注入认证传输。
+所有直接 `fetch(...)` 改为 `this.fetchImpl(...)`，默认值仍为 global fetch，方便纯单元测试，但正式入口必须注入认证传输。将 `preflightDefaultDatasourceId`（或等价）改为接受 `fetchImpl`，并由 `runTui()` 注入 `transport.fetch`。
 
 - [ ] **Step 3: 验证并提交**
 
 将 `dist/config/config-client.test.js`、
-`dist/protocol/copilotkit-client-auth.test.js` 追加到明确测试列表。
+`dist/protocol/copilotkit-client-auth.test.js`、
+preflight 认证测试追加到明确测试列表。
 
 ```bash
 npm --workspace @datafoundry/tui test
-git add apps/tui/src/config apps/tui/src/protocol apps/tui/package.json
+git add apps/tui/src/config apps/tui/src/protocol apps/tui/src/index.tsx apps/tui/package.json
 git commit -m "refactor(tui): share auth transport across rest and agui"
 ```
 
@@ -428,8 +442,10 @@ readline prompt。
 2. 查询 auth status；
 3. 尝试恢复或交互登录；
 4. 创建 `AuthenticatedTransport`；
-5. 注入 ConfigClient、CopilotKitClient 和 preflight；
+5. 注入 ConfigClient、CopilotKitClient 和 preflight（含 `run-defaults`），三者共用 `transport.fetch`；
 6. 渲染 Ink App。
+
+Task 7 的失败测试须覆盖：正式启动路径上 preflight 不再使用裸 `fetch`；未注入认证传输时 preflight 测试失败。
 
 在 `runTui()` 中定义：
 
@@ -553,6 +569,7 @@ git commit -m "test(tui): verify web and tui session sharing"
 - TUI 首次启动可登录或打开 Web 注册，密码不回显、不持久化。
 - 默认启动恢复当前 API 的最后一个账号；`--no-auto-login` 可切换账号。
 - `/logout` 区分完整注销与仅清本地。
-- REST 与 AG-UI 共享一个认证传输。
+- REST、AG-UI 与 `index.tsx` preflight（`run-defaults`）共享一个认证传输；无裸 `fetch` 打受保护 API。
+- 身份探测使用 `GET /api/v1/me`。
 - Web 与 TUI 登录同一用户后可互相读取服务端会话。
-- `--demo`、Demo Client 和自动匿名回退已删除。
+- `--demo`、Demo Client 和自动匿名回退已删除（正式链路优先的 DX 取舍已在计划中写明）。

@@ -249,7 +249,7 @@ TUI 能力优先级：
 - 新 schema 不包含开发身份，应用不包含旧存储迁移和自动删除逻辑；
 - 本地验证、CI 和原生部署 smoke 均走 password 认证。
 
-完整行为见 [正式认证统一与 TUI 登录设计](./2026-07-23-formal-auth-and-tui-login-design.md)。
+完整行为见 [正式认证统一与 TUI 登录设计](./2026-07-23-formal-auth-and-tui-login-design.md)。实施按 M0A.5a（正式认证基础）→ M0A.5b（TUI 登录）→ M0A.5c（password-only 收口）三个可独立回归的 PR 推进；身份探测复用现有 `GET /api/v1/me`。
 
 ## 9. M0B：Docker Compose
 

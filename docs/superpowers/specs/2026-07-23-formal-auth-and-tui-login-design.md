@@ -109,7 +109,7 @@ WEB_HOST=127.0.0.1
 AUTH_PUBLIC_BASE_URL=http://127.0.0.1:3000
 ```
 
-远程 M0A 验证通过 SSH 端口转发访问。M0B 再通过 Caddy HTTPS overlay 提供正式外部入口。Cookie 安全策略必须由经过校验的公共 URL 和显式部署规则决定，不能继续只依赖 `NODE_ENV`。
+远程 M0A 验证通过 SSH 端口转发访问。M0B 再通过 Caddy HTTPS overlay 提供正式外部入口。Cookie 安全策略必须由经过校验的公共 URL 和显式部署规则决定，不能继续只依赖 `NODE_ENV`。设置 Session/CSRF Cookie 与清除 Cookie 时必须使用同一套 `Secure` 属性；否则 HTTPS 下浏览器可能无法清掉旧 Cookie。
 
 #### 5.1.2 注册策略
 
@@ -169,7 +169,7 @@ TUI 增加三个边界清晰的组件：
 1. `TuiAuthClient`
    - 查询公开认证状态；
    - 登录；
-   - 调用 `/api/v1/auth/me` 验证身份；
+   - 调用现有 `GET /api/v1/me` 验证身份（不新增 `/api/v1/auth/me`）；
    - 获取或刷新 CSRF；
    - 注销。
 2. `TuiSessionStore`
@@ -193,7 +193,7 @@ TUI 启动时：
 1. 解析 `--runtime-url` 并得到包含部署路径的规范化 API base URL。
 2. 调用 `/api/v1/auth/status`。
 3. 读取该 base URL 对应的本地 Session。
-4. 携带 Session 调用 `/api/v1/auth/me`。
+4. 携带 Session 调用 `GET /api/v1/me`。
 5. Session 有效则显示当前用户并进入主界面。
 6. Session 缺失、过期或已撤销则清理缓存并进入未登录界面。
 
@@ -215,7 +215,7 @@ DataFoundry TUI
 - 密码隐藏输入，不出现在历史、日志或错误对象中；
 - 登录请求声明客户端类型为 `tui`，服务端签发 7 天 Session；
 - 登录成功后保存 `df_session`、`df_csrf`、用户显示信息和过期信息；
-- 再次调用 `/api/v1/auth/me` 确认身份和工作区；
+- 再次调用 `GET /api/v1/me` 确认身份和工作区；
 - 登录失败保留在认证界面并允许用户重试或返回。
 
 ### 6.3 Web 注册
@@ -273,7 +273,9 @@ TUI 提供 `/logout`：
 存储规则：
 
 - key 为规范化 API base URL，包括 scheme、host、有效端口和部署路径；
+- `localhost` 与 `127.0.0.1`（及 `::1`）视为不同端点，不合并 Session 槽；文档与帮助文案应提示用户保持与 `--runtime-url` 一致；
 - 同一文件可以保存多个 API base URL，但每个 base URL 只有一个账号；
+- 本地缓存的 `expiresAt` 允许小容差（建议约 60 秒）；仅当超出容差仍过期时才跳过 `/me` 并清理，避免客户端时钟略快时误清有效 Session；
 - 采用同目录临时文件、flush 和原子替换；
 - Unix 文件权限为 `0600`，目录权限为 `0700`；
 - Windows 只允许使用当前用户 `%APPDATA%` 下的固定目录，验证目标为普通文件且不跟随链接；
@@ -452,22 +454,22 @@ M0B 不得通过内部网络白名单、匿名默认身份或隐藏 dev token �
 
 ### 14.1 M0A.5a：正式认证基础
 
-- 建立共享的正式测试认证工具：注册、读取 test 验证令牌、验证、登录、Cookie Jar 和 CSRF；
-- 先迁移所有需要 HTTP 身份的 smoke 与诊断脚本；
-- 实现 loopback HTTP、HTTPS 和 Cookie 安全策略；
+- 建立共享的正式测试认证工具：注册、读取 test 验证令牌、验证、登录、Cookie Jar 和 CSRF；身份探测复用现有 `GET /api/v1/me`；
+- 先迁移所有需要 HTTP 身份的 smoke 与诊断脚本（扫描 `scripts/**/*.mjs`）；
+- 实现 loopback HTTP、HTTPS 和 Cookie 安全策略（设置与清除均带对齐的 `Secure`）；
 - 实现 `AUTH_REGISTRATION_MODE` 和真实 auth status；
 - 修复登录用户枚举；
 - 暂时保留旧开发模式，保证迁移期间验证能力不中断。
 
-退出门槛：原有验证入口均可在 password 模式运行，新增网络和注册安全测试通过。
+退出门槛：原有验证入口均可在 password 模式运行，新增网络和注册安全测试通过。已知中间态：Web 仍可能按 `NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE` 分支、未读 `auth/status`，因此 API `closed` 时 Web 仍可能展示注册入口；该不一致在 M0A.5c 收口，不算 5a 漏做。
 
 ### 14.2 M0A.5b：TUI 登录
 
 - 实现 TUI Auth Client、Session Store 和 Authenticated Transport；
 - 完成登录、Web 注册引导、7 天 Session、恢复、切换和注销；
-- 迁移 REST 与 AG-UI 到统一认证传输；
+- 将 TUI 全部网络出口（ConfigClient、CopilotKitClient、`index.tsx` preflight）迁到统一认证传输；
 - 完成 Web/TUI 双向会话共享测试；
-- 删除 `--demo` 和 Demo Client。
+- 删除 `--demo` 和 Demo Client（正式链路优先；中间期不再保留离线 Demo 作为 DX 逃生舱）。
 
 退出门槛：TUI 在 password 模式下完整可用，不需要 dev token。
 
@@ -475,9 +477,9 @@ M0B 不得通过内部网络白名单、匿名默认身份或隐藏 dev token �
 
 - 删除 API dev 身份、dev token 和开发用户接口；
 - 删除 Web 开发身份与用户切换；
-- 删除剩余开发认证配置、代码和测试；
-- 更新 M0A 默认监听、注册与 Cookie 配置；
-- 人工删除旧开发 storage 并重新初始化，不编写迁移代码；
+- 删除剩余开发认证配置、代码和测试（含 `packages/**` 依赖默认 `dev-user`/`dev_token` 的单测）；
+- 更新 M0A 默认监听、注册与 Cookie 配置（可与 PR #82 解耦：身份删除可先合，部署收口另 PR）；
+- 人工删除旧开发 storage 并重新初始化，不编写迁移代码；带着未重置旧 schema 启动时不承诺兼容，以拒绝启动或文档警告为准；
 - 运行全量测试、smoke 和原生部署验证。
 
 退出门槛：仓库中不存在可运行的开发认证旁路，所有正式验收门禁通过。

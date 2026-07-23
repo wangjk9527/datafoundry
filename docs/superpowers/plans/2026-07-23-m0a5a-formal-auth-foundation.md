@@ -13,9 +13,11 @@
 ## Execution baseline
 
 - 从包含设计提交 `c56ab35`、`fae07b6` 的分支开始；M0A.5a 不依赖 PR #82。
+- **身份探测统一复用现有 `GET /api/v1/me`**（位于 config-api），不新增 `/api/v1/auth/me`。共享测试客户端的 `verifyCurrentUser()`、后续 TUI `me()` 都必须打这条路径。
 - 本计划结束时 `DATAFOUNDRY_AUTH_MODE=dev` 仍可临时运行；删除工作属于 M0A.5c。
 - 每个任务按红—绿—重构执行；不要先批量修改生产代码再补测试。
 - 不新增旧数据库迁移、旧数据清理或兼容代码。
+- 已知中间态（不算 5a 漏做）：Web 仍可能按 `NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE` 分支、未读 `GET /api/v1/auth/status`，因此 API `registrationMode=closed` 时 Web 仍可能展示注册入口；由 M0A.5c 收口。
 
 ### Task 1: 建立共享正式认证测试客户端
 
@@ -32,7 +34,8 @@
 - 从多个 `Set-Cookie` 响应中保存 `df_session`、`df_csrf`；
 - unsafe method 自动添加 `X-CSRF-Token`；
 - 401/403 响应不泄漏 Cookie；
-- `registerAndLogin()` 严格执行注册、读取 test 邮件令牌、验证、登录、`/me`；
+- `registerAndLogin()` 严格执行注册、读取 test 邮件令牌、验证、登录、`GET /api/v1/me`；
+- `verifyCurrentUser()` 只请求 `GET /api/v1/me`，不得请求 `/api/v1/auth/me`；
 - 每个测试生成唯一邮箱，不依赖固定用户。
 
 测试应直接构造假响应：
@@ -101,7 +104,8 @@ export function resolveApiUrl(baseUrl, relativePath) {
 - Cookie Jar 只保存 cookie name/value，不保存无关属性；
 - unsafe method 为 `POST/PATCH/PUT/DELETE`；
 - 错误对象只包含状态码、稳定错误码和脱敏消息；
-- 不记录密码、Cookie、CSRF、验证令牌或 `Set-Cookie`。
+- 不记录密码、Cookie、CSRF、验证令牌或 `Set-Cookie`；
+- `registerAndLogin()` 返回 `{ userId, workspaceId, email, cookies }`，供后续 HTTP+metadata 双读脚本绑定动态身份。
 
 - [ ] **Step 4: 运行测试并确认通过**
 
@@ -195,7 +199,10 @@ export function validateAuthPublicUrl(raw: string): {
 ```ts
 appendSessionCookie(headers, value, { secure, maxAgeSeconds });
 appendCsrfCookie(headers, value, { secure, maxAgeSeconds });
+appendClearAuthCookies(headers, { secure });
 ```
+
+设置与清除路径都必须应用同一 `secure` 值。覆盖测试：HTTPS 配置下清除 Cookie 的 `Set-Cookie` 也带 `Secure`，loopback HTTP 下设置与清除均不带 `Secure`。
 
 - [ ] **Step 4: 运行测试**
 
@@ -309,7 +316,7 @@ git commit -m "feat(auth): add registration policy and public status"
 - 登录响应返回服务端计算的 `session.expiresAt`，与数据库记录及 Cookie Max-Age 一致；
 - 非法 client 返回 400，不静默降级。
 
-时间断言使用容差，不以微秒级时序判断防枚举。
+时间断言使用容差（建议 ±120 秒），不以微秒级时序判断防枚举或 Session TTL。
 
 - [ ] **Step 2: 运行并确认失败**
 
@@ -492,7 +499,8 @@ git commit -m "feat(auth): add recoverable csrf rotation"
 - [ ] **Step 1: 增加一个会失败的扫描门禁**
 
 在 `scripts/auth-foundation.test.mjs` 动态扫描所有包含 `fetch(`、`http.request`
-或 `https.request` 的 `scripts/*.mjs`。每个命中必须归入：
+或 `https.request` 的 **`scripts/**/*.mjs`**（含子目录，例如 `scripts/verify-tools/`、
+`scripts/deploy/`）。每个命中必须归入：
 
 ```js
 const FORMAL_HTTP_AUTH_TARGETS = [
@@ -510,11 +518,17 @@ const FORMAL_HTTP_AUTH_TARGETS = [
   "smoke-server-datasources-e2e.mjs",
   "test-builtin-dtc-growth-datasource.mjs",
   "verify-token-usage-display.mjs",
+  // 扫描发现的其他 HTTP 脚本也必须列入下方某一类，不得遗漏
 ];
-const PUBLIC_HTTP_TARGETS = [];
-const DIRECT_METADATA_FIXTURE_TARGETS = [];
+const PUBLIC_HTTP_TARGETS = [
+  // 明确无需身份的公开探测（如 health）；不得携带开发认证旁路
+];
+const DIRECT_METADATA_FIXTURE_TARGETS = [
+  // 纯 metadata/本地 fixture、无 HTTP 身份；留给 M0A.5c
+];
 ```
 
+分类键使用相对 `scripts/` 的路径（例如 `verify-tools/knowledge-tool.mjs`）。
 任何未分类脚本使测试失败。对 `FORMAL_HTTP_AUTH_TARGETS` 禁止：
 
 ```text
@@ -524,6 +538,16 @@ Authorization: Bearer dev
 ```
 
 允许纯 metadata 单元/集成测试暂时继续使用直接 fixture，留给 M0A.5c。
+
+**HTTP + metadata 双读规则（强制）：** 凡既发 HTTP 又直读 Metadata/DB 的脚本，
+业务断言必须绑定 `registerAndLogin()` 返回的动态 `userId`/`workspaceId`，禁止继续
+断言硬编码 `"dev-user"` / `"default"`。点名验收：`scripts/smoke-copilotkit-run.mjs`
+（今日 HTTP 匿名走 `dev-user`，同时又用 metadata 硬编码 `user_id: "dev-user"`——
+只换 Cookie、不改断言会全红）。
+
+CI 成本说明：同一进程内可复用一次 `registerAndLogin()` 结果跑多条业务断言；
+不要为每个子断言重新注册。若触发 `auth_rate_limits`，测试应换唯一邮箱或等待，
+不得回退到开发认证旁路。
 
 - [ ] **Step 2: 运行并确认失败**
 
@@ -540,15 +564,17 @@ Expected: FAIL，并列出仍依赖开发认证的 HTTP 脚本。
 1. 启动 password API 和 test mail；
 2. 使用 `createAuthenticatedTestClient()` 创建唯一正式用户；
 3. 后续 REST/AG-UI 请求复用该 client；
-4. 移除开发 header 和固定 `dev-user` 假设；
+4. 移除开发 header 和固定 `dev-user` 假设；HTTP+metadata 双读脚本改用动态身份；
 5. 保留原业务断言。
 
 每迁移 2–3 个脚本即运行对应 smoke。分为四个独立批次：
 
 1. config/auth：config-api、password-frontend-isolation；
-2. CopilotKit/AG-UI：copilotkit、interaction、ask-user；
+2. CopilotKit/AG-UI：copilotkit、**smoke-copilotkit-run**、interaction、ask-user；
 3. datasource/eval：server-datasources、DACOMP、verify-token；
 4. seed/test：两个 seed 脚本和 builtin DTC test。
+
+批次 2 必须单独跑通 `npm run smoke:copilotkit-run`，确认 metadata 断言已绑定动态用户。
 
 - [ ] **Step 4: 运行核心 smoke**
 
@@ -642,9 +668,12 @@ git commit -m "docs(auth): document formal auth foundation"
 
 ## M0A.5a exit gate
 
-- 所有需要 HTTP 身份的核心 smoke 能在 password 模式运行。
-- 注册 open/closed、loopback HTTP、HTTPS Secure Cookie、test mail 边界均有自动化测试。
+- 所有需要 HTTP 身份的核心 smoke 能在 password 模式运行；`scripts/**/*.mjs` 扫描门禁通过。
+- `smoke-copilotkit-run` 等 HTTP+metadata 双读脚本已绑定动态 `userId`/`workspaceId`。
+- 注册 open/closed、loopback HTTP、HTTPS Secure Cookie（设置与清除）、test mail 边界均有自动化测试。
 - 登录枚举顺序已修复，Web 30 天和 TUI 7 天 Session 可区分。
 - 登录响应返回服务端 `session.expiresAt`；CSRF 可通过稳定的 `CSRF_INVALID` 契约轮换一次。
 - `GET /api/v1/auth/status` 是真实服务端策略，不暴露敏感配置。
+- 身份探测统一使用 `GET /api/v1/me`。
 - 旧 dev 模式尚未删除，但新增代码和测试不得依赖它。
+- 已知中间态：Web 注册 UI 可能与 API `registrationMode` 短暂不一致，由 M0A.5c 收口。
