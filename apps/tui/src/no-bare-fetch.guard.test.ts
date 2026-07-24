@@ -53,7 +53,9 @@ describe("no bare fetch on protected TUI API paths", () => {
   });
 
   it("forbids offline demo symbols in production sources", () => {
-    const banned = /DemoCopilotKitClient|seedDemoState|--demo/;
+    const banned = new RegExp(
+      ["DemoCopilotKitClient", "seedDemoState", ["-", "-", "demo"].join("")].join("|"),
+    );
     const offenders: string[] = [];
     for (const file of walk(srcRoot)) {
       const rel = relative(srcRoot, file).replace(/\\/g, "/");

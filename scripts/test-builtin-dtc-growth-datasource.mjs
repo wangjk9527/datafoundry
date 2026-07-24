@@ -41,13 +41,7 @@ test("ensureBuiltinDtcGrowthDatasource copies fixture and registers datasource i
     database_path: join(root, "metadata.sqlite"),
     secret_master_key: "dtc-growth-builtin-test-key"
   });
-  metadataStore.users.upsertDevUser({
-    id: "user-a",
-    email: "user-a@example.com",
-    display_name: "User A",
-    dev_token: "user-a-token"
-  });
-
+  
   try {
     const first = ensureBuiltinDtcGrowthDatasource({
       metadataStore,
@@ -131,7 +125,6 @@ test("ensureBuiltinDtcGrowthDatasource copies fixture and registers datasource i
 test("createServer auto-provisions DTC Growth Review and test-connect works", async () => {
   assert.ok(existsSync(repoFixture), `fixture missing: ${repoFixture}`);
   const root = mkdtempSync(join(tmpdir(), "dtc-growth-server-"));
-  process.env.DATAFOUNDRY_AUTH_MODE = "password";
   process.env.AUTH_SESSION_SECRET = "dtc-growth-server-session-secret-32b!";
   process.env.AUTH_PUBLIC_BASE_URL = "http://127.0.0.1:3000";
   process.env.AUTH_EMAIL_DELIVERY = "test";
