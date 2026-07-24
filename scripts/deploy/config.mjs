@@ -23,14 +23,12 @@ export function parseDeploymentEnvironment(sourceText = "") {
 }
 
 const DEFAULTS = {
-  WEB_HOST: "0.0.0.0",
+  WEB_HOST: "127.0.0.1",
   WEB_PORT: "3000",
   API_HOST: "127.0.0.1",
   API_PORT: "8787",
-  DATAFOUNDRY_AUTH_MODE: "password",
   AUTH_EMAIL_DELIVERY: "test",
   AUTH_REGISTRATION_MODE: "open",
-  AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
   STORAGE_ROOT_DIR: "storage",
   METADATA_DB_PATH: "storage/metadata/workbench.sqlite"
 };
@@ -114,13 +112,12 @@ export function ensureDeploymentEnvironment(sourceText, options = {}) {
     }
   }
 
-  if (
-    (parsed.AUTH_PUBLIC_BASE_URL == null || String(parsed.AUTH_PUBLIC_BASE_URL).trim() === "") &&
-    updates.AUTH_PUBLIC_BASE_URL == null
-  ) {
+  if (parsed.AUTH_PUBLIC_BASE_URL == null || String(parsed.AUTH_PUBLIC_BASE_URL).trim() === "") {
     const webPort = updates.WEB_PORT ?? parsed.WEB_PORT ?? DEFAULTS.WEB_PORT;
     updates.AUTH_PUBLIC_BASE_URL = `http://127.0.0.1:${webPort}`;
-    generatedKeys.push("AUTH_PUBLIC_BASE_URL");
+    if (!generatedKeys.includes("AUTH_PUBLIC_BASE_URL")) {
+      generatedKeys.push("AUTH_PUBLIC_BASE_URL");
+    }
   }
 
   const text = Object.keys(updates).length > 0
@@ -134,16 +131,57 @@ export function ensureDeploymentEnvironment(sourceText, options = {}) {
 }
 
 export function renderWebEnvironment(env) {
-  const authMode = env.DATAFOUNDRY_AUTH_MODE?.trim() || "password";
   const apiHost = env.API_HOST?.trim() || "127.0.0.1";
   const apiPort = env.API_PORT?.trim() || "8787";
   return [
-    `NEXT_PUBLIC_DATAFOUNDRY_AUTH_MODE=${authMode}`,
     "NEXT_PUBLIC_AGENT_RUNTIME_URL=",
     "NEXT_PUBLIC_CONFIG_API_URL=",
     `API_PROXY_TARGET=http://${apiHost}:${apiPort}`,
     ""
   ].join("\n");
+}
+
+function isLoopbackHost(hostname) {
+  const host = String(hostname ?? "")
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/u, "$1");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+/**
+ * Native deploy allows HTTP only on loopback. Non-loopback hosts must use HTTPS
+ * (or SSH port forwarding to a loopback listener).
+ */
+export function assertNativeAuthPublicBaseUrl(raw) {
+  let url;
+  try {
+    url = new URL(String(raw ?? "").trim());
+  } catch {
+    throw new Error("AUTH_PUBLIC_BASE_URL must be a valid absolute URL");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("AUTH_PUBLIC_BASE_URL must use http or https");
+  }
+  if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+    throw new Error(
+      "AUTH_PUBLIC_BASE_URL HTTP is only allowed for loopback hosts (127.0.0.1, localhost, ::1). " +
+        "For remote access use SSH port forwarding to the loopback listener, or configure HTTPS."
+    );
+  }
+  return url;
+}
+
+export function assertNativeBindHosts(env = {}) {
+  for (const key of ["WEB_HOST", "API_HOST"]) {
+    const host = String(env[key] ?? "").trim();
+    if (!host) continue;
+    if (host === "0.0.0.0" || host === "::") {
+      throw new Error(
+        `${key}=${host} exposes the service on all interfaces over plain HTTP. ` +
+          "Native password-only installs bind loopback by default; use SSH forwarding or a TLS reverse proxy."
+      );
+    }
+  }
 }
 
 async function writeAtomic(filePath, content, mode = 0o600) {
