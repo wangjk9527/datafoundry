@@ -29,6 +29,7 @@ const DEFAULTS = {
   API_PORT: "8787",
   DATAFOUNDRY_AUTH_MODE: "password",
   AUTH_EMAIL_DELIVERY: "test",
+  AUTH_REGISTRATION_MODE: "open",
   AUTH_PUBLIC_BASE_URL: "http://127.0.0.1:3000",
   STORAGE_ROOT_DIR: "storage",
   METADATA_DB_PATH: "storage/metadata/workbench.sqlite"
