@@ -13,12 +13,25 @@ export function parseCookies(request: IncomingMessage): Record<string, string> {
   if (!header) {
     return {};
   }
-  return Object.fromEntries(
-    header.split(";").map((part) => {
-      const [name, ...rest] = part.trim().split("=");
-      return [name, decodeURIComponent(rest.join("="))];
-    }).filter(([name]) => Boolean(name))
-  );
+  const cookies: Record<string, string> = {};
+  for (const part of header.split(";")) {
+    const trimmed = part.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const eq = trimmed.indexOf("=");
+    const name = (eq === -1 ? trimmed : trimmed.slice(0, eq)).trim();
+    if (!name) {
+      continue;
+    }
+    const rawValue = eq === -1 ? "" : trimmed.slice(eq + 1);
+    try {
+      cookies[name] = decodeURIComponent(rawValue);
+    } catch {
+      // Ignore malformed percent-encoding; treat the cookie as absent.
+    }
+  }
+  return cookies;
 }
 
 export function appendAuthCookies(response: ServerResponse, input: {

@@ -16,7 +16,8 @@ import {
 } from "../apps/api/dist/auth/config.js";
 import {
   appendAuthCookies,
-  appendClearAuthCookies
+  appendClearAuthCookies,
+  parseCookies
 } from "../apps/api/dist/auth/cookies.js";
 
 const SCRIPTS_ROOT = dirname(fileURLToPath(import.meta.url));
@@ -38,10 +39,17 @@ const FORMAL_HTTP_AUTH_TARGETS = [
   "verify-token-usage-display.mjs"
 ];
 
+// Deploy HTTP scripts are classified when present (Plan B). Do not require them on main-only trees.
 const PUBLIC_HTTP_TARGETS = [
   "deploy/health.mjs",
   "deploy/smoke-native-deploy.mjs"
-];
+].filter((relativePath) => {
+  try {
+    return statSync(join(SCRIPTS_ROOT, relativePath)).isFile();
+  } catch {
+    return false;
+  }
+});
 
 const DIRECT_METADATA_FIXTURE_TARGETS = [];
 
@@ -219,6 +227,33 @@ async function captureSetCookie(write) {
     });
   }
 }
+
+test("parseCookies ignores malformed percent-encoding instead of throwing", () => {
+  const request = {
+    headers: {
+      cookie: "df_session=%E0%A4%A; df_csrf=ok-token; broken=%ZZ; plain=hello%20world"
+    }
+  };
+  assert.doesNotThrow(() => parseCookies(request));
+  const cookies = parseCookies(request);
+  assert.equal(cookies.df_csrf, "ok-token");
+  assert.equal(cookies.plain, "hello world");
+  assert.equal(cookies.df_session, undefined);
+  assert.equal(cookies.broken, undefined);
+});
+
+test("malformed Cookie header yields 401 rather than 500 in password mode", async () => {
+  await withPasswordApi({}, async ({ baseUrl }) => {
+    const response = await fetch(`${baseUrl}/api/v1/me`, {
+      headers: {
+        Cookie: "df_session=%E0%A4%A; df_csrf=not-a-session"
+      }
+    });
+    assert.equal(response.status, 401);
+    const body = await response.json();
+    assert.equal(body.error.code, "UNAUTHORIZED");
+  });
+});
 
 test("appendAuthCookies and clear use the same secure flag", async () => {
   const secureCookies = await captureSetCookie((res) => {
