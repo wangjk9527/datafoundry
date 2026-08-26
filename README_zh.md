@@ -1,3 +1,8 @@
+> **迁移声明（2026-08-26）**  
+> 本仓库 [`datagallery-lab/datafoundry`](https://github.com/datagallery-lab/datafoundry) 已变为 fork。  
+> **现役上游：** [`datagallery-ai/datafoundry`](https://github.com/datagallery-ai/datafoundry)  
+> Issue、PR、克隆与文档请改到源仓：<https://github.com/datagallery-ai/datafoundry> · 文档站 <https://datagallery-ai.github.io/datafoundry/>
+
 <h1 align="center">DataFoundry</h1>
 
 <p align="center">
