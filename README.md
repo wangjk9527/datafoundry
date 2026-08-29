@@ -1,7 +1,12 @@
-> **Migration notice (2026-08-26)**  
-> This repository ([`datagallery-lab/datafoundry`](https://github.com/datagallery-lab/datafoundry)) is now a fork.  
-> **Canonical upstream:** [`datagallery-ai/datafoundry`](https://github.com/datagallery-ai/datafoundry)  
-> Please clone, file issues, and open PRs on the source repo: <https://github.com/datagallery-ai/datafoundry> · Docs: <https://datagallery-ai.github.io/datafoundry/>
+## ⚠️ Repository Migration Notice
+
+> **This repository ([`datagallery-lab/datafoundry`](https://github.com/datagallery-lab/datafoundry)) is now a fork.**
+>
+> **The active and sole upstream is [`datagallery-ai/datafoundry`](https://github.com/datagallery-ai/datafoundry).**
+>
+> **Open issues and PRs, and clone the project, from the [source repository](https://github.com/datagallery-ai/datafoundry).** Documentation: <https://datagallery-ai.github.io/datafoundry/>
+
+---
 
 <h1 align="center">DataFoundry</h1>
 
